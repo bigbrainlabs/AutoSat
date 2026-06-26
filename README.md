@@ -158,10 +158,14 @@ AutoSat/
 ├── firmware/
 │   ├── firmware.ino               ← Haupt-Firmware (IMU, Motor, Tracking, NVM)
 │   └── webportal.h                ← Web-Portal (HTML/CSS/JS + HTTP-Handler)
+├── docs/
+│   └── bedienung-webportal.md     ← Bedienung & Kalibrierung über das Web-Portal
 └── 3D-Print-Parts/
     ├── Autosat-Elevation_Mount.stl  ← Halterung Elevation-Servo
     └── Nema17-Ground_Mount.stl      ← Grundhalterung NEMA17 Azimut-Motor
 ```
+
+**Dokumentation:** [Bedienung & Kalibrierung über das Web-Portal](docs/bedienung-webportal.md)
 
 ---
 
@@ -201,6 +205,16 @@ Wer das Projekt gut findet – ich schreibe die Buch-Serie **„Logbuch ohne Pos
 👉 [Logbuch ohne Pose – bei Amazon](https://amzn.to/4w6gBo9)
 
 Mit dem Kauf eines Bandes oder der ganzen Serie unterstützt du die Weiterentwicklung direkt. Danke! ⚓
+
+---
+
+## Lizenz
+
+Dieses Projekt steht unter der **GNU General Public License v3.0 (GPL-3.0)**.
+
+Das bedeutet: Du kannst den Code frei verwenden, verändern und weitergeben – solange Ableitungen ebenfalls unter der GPL v3 veröffentlicht werden und die Quelle angegeben wird.
+
+Weitere Details: [https://www.gnu.org/licenses/gpl-3.0.html](https://www.gnu.org/licenses/gpl-3.0.html)
 
 ---
 
