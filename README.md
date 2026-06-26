@@ -156,10 +156,11 @@ Azimut-Motor startet sofort an der gespeicherten Step-Position aus dem letzten B
 AutoSat/
 ├── README.md
 ├── firmware/
-│   ├── firmware.ino       ← Haupt-Firmware (IMU, Motor, Tracking, NVM)
-│   └── webportal.h        ← Web-Portal (HTML/CSS/JS + HTTP-Handler)
+│   ├── firmware.ino               ← Haupt-Firmware (IMU, Motor, Tracking, NVM)
+│   └── webportal.h                ← Web-Portal (HTML/CSS/JS + HTTP-Handler)
 └── 3D-Print-Parts/
-    └── GT2 Ritzel 40T.stl ← Zahnrad Azimut-Antrieb
+    ├── Autosat-Elevation_Mount.stl  ← Halterung Elevation-Servo
+    └── Nema17-Ground_Mount.stl      ← Grundhalterung NEMA17 Azimut-Motor
 ```
 
 ---
