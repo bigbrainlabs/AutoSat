@@ -27,16 +27,16 @@ Bordnetz 12 V
     │
     ├──► TMC2209  VM  (12 V Motorspannung)
     │
-    └──► Spannungsregler 5 V
+    └──► DC-DC Konverter 12 V → 5 V
               │
-              ├──► MG996R Servo  VCC (5–6 V)
+              ├──► MG996R Servo  VCC (5 V, via Schleifring Ader 2)
               │
-              └──► USB-Eingang ESP32-C3 (5 V via USB-C)
+              └──► ESP32-C3  5V-Pin (nicht USB – direkt auf 5V-Rail)
                         │
                         └── 3,3 V intern (für GY-91, GY-271, TMC2209 VIO)
 ```
 
-> Servo nie direkt vom ESP32-3,3-V-Pin versorgen – zu hoher Strom. Eigenes 5-V-Netzteil oder BEC verwenden.
+> Den ESP32-C3 am 5V-Pin (nicht USB-C) anschließen, wenn der DC-DC Konverter die Versorgung übernimmt. Nie gleichzeitig USB und externen 5V anlegen.
 
 ---
 

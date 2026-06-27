@@ -38,6 +38,7 @@ Elevation wird einmalig kalibriert (Servo-Winkel bei Satellitensignal gespeicher
 | 7 | GT2-Riemen + Umlenkrolle | Kraftübertragung Azimut-Antrieb | [Amazon](https://amzn.to/4oPDdqM) |
 | 9 | Drehlager für Plattform | Zentrale Drehachse | [Amazon](https://amzn.to/4oMyjL0) |
 | 10 | Schleifring 6-polig | Strom- & Signalübertragung über die Drehachse (verhindert Kabelwicklung) | [Amazon](https://amzn.to/4eMYXz2) |
+| 11 | DC-DC Konverter 12V → 5V | Bordnetz-Versorgung für Servo und ESP32 | [Amazon](https://amzn.to/4oSf8zE) |
 
 > Spannungsversorgung und Kleinmaterial (Kabel, Stecker, Dupont) nach eigenem Bedarf.
 
