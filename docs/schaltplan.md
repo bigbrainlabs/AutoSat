@@ -4,15 +4,18 @@
 
 ```
                         ┌──────────────────────────┐
-                        │     ESP32-C3 SuperMini    │
-                        │                          │
-          3,3V ────────►│ 3V3              GPIO2   ├──── STEP ────────────► TMC2209
-           GND ────────►│ GND              GPIO4   ├──── DIR  ────────────► TMC2209 (bestückt, per UART übersteuert)
-                        │                  GPIO5   ├──── PWM  ────────────► MG996R Servo (Signal)
-                        │                  GPIO6   ├──── SDA  ─────┬──────► GY-91 (MPU-6500)
-                        │                  GPIO7   ├──── SCL  ─────┴──────► GY-271 (HMC5883L)
-                        │                  GPIO8   ├──── UART TX ─────────► TMC2209 PDN_UART
+                        │     ESP32-C3 SuperMini    │              ┌─────────────────────┐
+                        │                          │              │  Schleifring 6-pol.  │
+          3,3V ────────►│ 3V3              GPIO2   ├──── STEP ────────────────────────────────► TMC2209
+           GND ────────►│ GND              GPIO4   ├──── DIR  ────────────────────────────────► TMC2209 (per UART übersteuert)
+                        │                  GPIO5   ├──── PWM  ──► Ader 1 (Signal) ──────────► MG996R Servo
+                        │                  GPIO6   ├──── SDA  ─────┬──────────────────────────► GY-91 (MPU-6500)
+                        │                  GPIO7   ├──── SCL  ─────┴──────────────────────────► GY-271 (HMC5883L)
+                        │                  GPIO8   ├──── UART TX ──────────────────────────────► TMC2209 PDN_UART
                         └──────────────────────────┘
+                                                         5V ──► Ader 2 (VCC) ──────────────► MG996R Servo
+                                                        GND ──► Ader 3 (GND) ──────────────► MG996R Servo
+                                                        (Adern 4–6 vorerst ungenutzt)
 ```
 
 ---
@@ -118,13 +121,28 @@ SCL ──── 4,7 kΩ ──── 3,3 V
 
 ---
 
+## Schleifring 6-polig – Drehachse
+
+Der Schleifring sitzt in der Drehachse der Plattform und überträgt Strom und Signal vom festen Unterbau zum rotierenden Teil. Aktuell werden nur 3 der 6 Adern genutzt:
+
+| Ader | Signal | Von | Zu |
+|------|--------|-----|----|
+| 1 | Servo Signal (PWM) | ESP32-C3 GPIO5 | MG996R Signal (Orange/Gelb) |
+| 2 | Servo VCC (5 V) | 5-V-Netzteil | MG996R VCC (Rot) |
+| 3 | GND | Gemeinsame Masse | MG996R GND (Braun/Schwarz) |
+| 4–6 | – | ungenutzt | – |
+
+> Adern 4–6 sind für spätere Erweiterungen reserviert (z.B. weitere Sensoren auf der rotierenden Plattform).
+
+---
+
 ## MG996R Servo – Elevation-Antrieb
 
 | Servo-Kabel | Anschluss |
 |-------------|-----------|
-| Signal (Orange/Gelb) | ESP32-C3 GPIO5 |
-| VCC (Rot) | 5-V-Netzteil |
-| GND (Braun/Schwarz) | GND (gemeinsam mit ESP32) |
+| Signal (Orange/Gelb) | Schleifring Ader 1 → ESP32-C3 GPIO5 |
+| VCC (Rot) | Schleifring Ader 2 → 5-V-Netzteil |
+| GND (Braun/Schwarz) | Schleifring Ader 3 → GND (gemeinsam mit ESP32) |
 
 ---
 
@@ -149,3 +167,4 @@ Die vier Motorleitungen werden an den TMC2209 angeschlossen. Typische Farbbelegu
 - **TMC2209 UART-Adresse falsch:** MS1 und MS2 müssen beide HIGH (3,3 V) sein → Adresse 3. Adresse 0 (beide LOW) führt zu keiner Kommunikation.
 - **Magnetometer zu nah am Motor:** HMC5883L muss möglichst weit weg von NEMA17 und den Motorstromkabeln montiert sein – starke Störfelder verfälschen den Kompasswert.
 - **Servo direkt an 3,3 V:** Führt zu Brownouts des ESP32. Immer externe 5-V-Versorgung verwenden.
+- **Schleifring-Adern vertauscht:** Signal, VCC und GND am Schleifring auf beiden Seiten (fest/rotierend) mit Multimeter durchmessen bevor der Servo angeschlossen wird.
