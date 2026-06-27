@@ -1,5 +1,7 @@
 # AutoSat – Schaltplan & Verdrahtung
 
+> **Hinweis:** Ein grafischer Schaltplan (z.B. als Fritzing- oder KiCad-Datei) wird demnächst ergänzt, um die Verdrahtung noch übersichtlicher darzustellen.
+
 ## Systemübersicht
 
 ```
