@@ -159,13 +159,16 @@ AutoSat/
 │   ├── firmware.ino               ← Haupt-Firmware (IMU, Motor, Tracking, NVM)
 │   └── webportal.h                ← Web-Portal (HTML/CSS/JS + HTTP-Handler)
 ├── docs/
-│   └── bedienung-webportal.md     ← Bedienung & Kalibrierung über das Web-Portal
+│   ├── bedienung-webportal.md     ← Bedienung & Kalibrierung über das Web-Portal
+│   └── schaltplan.md              ← Schaltplan & Verdrahtung aller Komponenten
 └── 3D-Print-Parts/
     ├── Autosat-Elevation_Mount.stl  ← Halterung Elevation-Servo
     └── Nema17-Ground_Mount.stl      ← Grundhalterung NEMA17 Azimut-Motor
 ```
 
-**Dokumentation:** [Bedienung & Kalibrierung über das Web-Portal](docs/bedienung-webportal.md)
+**Dokumentation:**
+- [Bedienung & Kalibrierung über das Web-Portal](docs/bedienung-webportal.md)
+- [Schaltplan & Verdrahtung](docs/schaltplan.md)
 
 ---
 
