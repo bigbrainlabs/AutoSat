@@ -164,6 +164,21 @@ float azMountOffset   = 0.0f;   // Montageoffset: Kompassnord→Schüssel bei st
 long azStepMin = -(long)(1.5f * 200 * 16 * 2.0f);   // -9600
 long azStepMax =  (long)(1.5f * 200 * 16 * 2.0f);   // +9600
 
+// ── Stufe 1: Motor-Flag + Vibrationserkennung ────────────────────────────
+bool    motorRunning      = false;
+bool    vibrationDetected = false;
+bool    compassFrozen     = false;
+float   accelMagBuf[10]   = {};
+uint8_t accelBufIdx       = 0;
+
+// ── Stufe 2: Kompass als separates Heading / Drift-Anker ─────────────────
+float   compassHeading  = 0.0f;
+float   compassBuf[40]  = {};
+uint8_t compassBufIdx2  = 0;
+bool    compassBufFull  = false;
+bool    compassStable   = false;
+unsigned long stillnessStart = 0;
+
 // ═══════════════════════════════════════════════
 // MPU INIT
 // ═══════════════════════════════════════════════
@@ -368,32 +383,58 @@ void updateIMU(SensorData &d) {
   }
 
 
-  if ((ak8963_ok || qmc_ok) && (d.mx != 0.0f || d.my != 0.0f || d.mz != 0.0f)) {
-    // Tilt-kompensiertes Magnetometer-Heading
+  // Stufe 2: heading_yaw = rein Gyro; Kompass nur als Drift-Anker
+  heading_yaw   = gyro_hdg;
+  compassFrozen = motorRunning || vibrationDetected;
+
+  bool hasCompass = (ak8963_ok || qmc_ok || hmc_ok) &&
+                    (d.mx != 0.0f || d.my != 0.0f || d.mz != 0.0f);
+  if (hasCompass) {
+    // Tilt-kompensiertes Magnetometer-Heading (identische Rechnung wie zuvor)
     float cosR = cosf(roll  * M_PI / 180.0f);
     float sinR = sinf(roll  * M_PI / 180.0f);
     float cosP = cosf(pitch * M_PI / 180.0f);
     float sinP = sinf(pitch * M_PI / 180.0f);
-
     float Xh = d.mx * cosP + d.mz * sinP;
     float Yh = d.mx * sinR * sinP + d.my * cosR - d.mz * sinR * cosP;
+    float ch = atan2f(-Yh, Xh) * 180.0f / M_PI;
+    if (ch < 0.0f) ch += 360.0f;
+    ch -= MAG_DECLINATION;
+    if (ch < 0.0f) ch += 360.0f;
+    compassHeading = ch;
 
-    float mag_hdg = atan2f(-Yh, Xh) * 180.0f / M_PI;
-    if (mag_hdg < 0.0f) mag_hdg += 360.0f;
-    mag_hdg -= MAG_DECLINATION;
-    if (mag_hdg < 0.0f) mag_hdg += 360.0f;
+    // Stabilitätspuffer: Standardabweichung über ~2s
+    compassBuf[compassBufIdx2] = ch;
+    compassBufIdx2 = (compassBufIdx2 + 1) % 40;
+    if (compassBufIdx2 == 0) compassBufFull = true;
+    if (compassBufFull) {
+      float mean = 0;
+      for (int i = 0; i < 40; i++) mean += compassBuf[i];
+      mean /= 40.0f;
+      float var = 0;
+      for (int i = 0; i < 40; i++) {
+        float ang_diff = compassBuf[i] - mean;
+        while (ang_diff >  180.0f) ang_diff -= 360.0f;
+        while (ang_diff < -180.0f) ang_diff += 360.0f;
+        var += ang_diff * ang_diff;
+      }
+      compassStable = sqrtf(var / 40.0f) < 2.0f;
+    }
 
-    // Komplementärfilter: dynamisches Alpha je nach Drehrate
-    float alpha_yaw = (fabsf(gz_net) > GZ_MOVING_THR) ? ALPHA_YAW_MOVING : ALPHA_YAW_STILL;
-    float diff = mag_hdg - gyro_hdg;
-    while (diff >  180.0f) diff -= 360.0f;
-    while (diff < -180.0f) diff += 360.0f;
-
-    heading_yaw = gyro_hdg + (1.0f - alpha_yaw) * diff;
-    if (heading_yaw >= 360.0f) heading_yaw -= 360.0f;
-    if (heading_yaw <    0.0f) heading_yaw += 360.0f;
-  } else {
-    heading_yaw = gyro_hdg;
+    // Drift-Korrektur nur im gesicherten Stillstand (>5s, kein Motor, keine Vibration, Kompass stabil)
+    if (!motorRunning && !vibrationDetected && compassStable) {
+      if (stillnessStart == 0) stillnessStart = millis();
+      if (millis() - stillnessStart > 5000) {
+        float drift = compassHeading - heading_yaw;
+        while (drift >  180.0f) drift -= 360.0f;
+        while (drift < -180.0f) drift += 360.0f;
+        heading_yaw += drift * 0.001f * dt;
+        if (heading_yaw >= 360.0f) heading_yaw -= 360.0f;
+        if (heading_yaw <    0.0f) heading_yaw += 360.0f;
+      }
+    } else {
+      stillnessStart = 0;
+    }
   }
 }
 
@@ -500,6 +541,7 @@ void stepMotor(bool dir, unsigned int stepDelay = STEP_DELAY_TRACK) {
   delayMicroseconds(stepDelay);
   currentSteps  += dir ? 1 : -1;
   lastMotorTime  = millis();
+  motorRunning   = true;
   positionDirty  = true;
   dbg_dir        = dir;
 }
@@ -518,6 +560,25 @@ void stepMotorManual(bool dir, int count) {
       d = STEP_MAN_MIN;
     stepMotor(dir, d);
   }
+}
+
+// ═══════════════════════════════════════════════
+// MOTOR-FLAG + VIBRATIONSERKENNUNG (Stufe 1)
+// ═══════════════════════════════════════════════
+void updateMotorFlag() {
+  if (motorRunning && millis() - lastMotorTime > 500)
+    motorRunning = false;
+}
+
+void updateVibration(SensorData &d) {
+  float mag = sqrtf(d.ax*d.ax + d.ay*d.ay + d.az*d.az);
+  accelMagBuf[accelBufIdx++ % 10] = mag;
+  float mean = 0;
+  for (int i = 0; i < 10; i++) mean += accelMagBuf[i];
+  mean /= 10.0f;
+  float var = 0;
+  for (int i = 0; i < 10; i++) var += (accelMagBuf[i]-mean)*(accelMagBuf[i]-mean);
+  vibrationDetected = sqrtf(var / 10.0f) > 0.05f;
 }
 
 // ═══════════════════════════════════════════════
@@ -555,7 +616,7 @@ void updateAzimuth(float heading) {
 static uint8_t servoStepMs = SERVO_STEP_MS_MANUAL;
 
 // Zielwinkel setzen. tracking=true → schnelle Rampe für Live-Tracking
-void servoMoveTo(int angle, bool tracking = false) {
+void servoMoveTo(int angle, bool tracking) {
   if (!servoEnabled) return;
   servoStepMs = tracking ? SERVO_STEP_MS_TRACKING : SERVO_STEP_MS_MANUAL;
   servoTarget = constrain(angle, servoMin, servoMax);
@@ -627,6 +688,28 @@ void setup() {
   mpuInit();
   qmcInit();
   hmc5883lInit();
+
+  // Initialer heading_yaw aus Kompass (Mittelwert ~3s, Tilt bei Startup ≈ 0°)
+  {
+    float initSum = 0; int initN = 0;
+    for (int i = 0; i < 30; i++) {
+      SensorData tmp = readMPU();
+      if (tmp.mx != 0.0f || tmp.my != 0.0f || tmp.mz != 0.0f) {
+        // pitch/roll ≈ 0 beim Start → Xh=mx, Yh=my
+        float h = atan2f(-tmp.my, tmp.mx) * 180.0f / M_PI;
+        if (h < 0.0f) h += 360.0f;
+        h -= MAG_DECLINATION;
+        if (h < 0.0f) h += 360.0f;
+        initSum += h; initN++;
+      }
+      delay(100);
+    }
+    if (initN > 0) {
+      heading_yaw    = initSum / initN;
+      compassHeading = heading_yaw;
+      Serial.printf("Init heading_yaw: %.1f° (%d Samples)\n", heading_yaw, initN);
+    }
+  }
 
   // Alle persistenten Werte laden
   prefs.begin("autosat", true);
@@ -700,7 +783,9 @@ void loop() {
     positionDirty  = false;
   }
 
+  updateMotorFlag();
   SensorData data = readMPU();
+  updateVibration(data);
   updateIMU(data);
   if (trackingEnabled) {
     updateAzimuth(heading_yaw);
@@ -732,10 +817,11 @@ void loop() {
     float err = targetAzimuth - dish;
     while (err >  180.0f) err -= 360.0f;
     while (err < -180.0f) err += 360.0f;
-    Serial.printf("Hdg:%.1f° gz:%.2f  Err:%.1f°  Steps:%ld  Srv:%d°  Mag:%s%s\n",
-      heading_yaw, data.gz - gz_offset, err, currentSteps,
+    Serial.printf("Hdg:%.1f° Cmp:%.1f° gz:%.2f  Err:%.1f°  Steps:%ld  Srv:%d°  Mag:%s%s%s\n",
+      heading_yaw, compassHeading, data.gz - gz_offset, err, currentSteps,
       servoManualAngle,
-      qmc_ok ? "QMC" : (ak8963_ok ? "AK" : "OFF"),
+      qmc_ok ? "QMC" : (hmc_ok ? "HMC" : (ak8963_ok ? "AK" : "OFF")),
+      compassFrozen ? " [COMP-FRZ]" : (compassStable ? " [COMP-OK]" : ""),
       manualControl ? " [MANUELL]" : "");
   }
 }

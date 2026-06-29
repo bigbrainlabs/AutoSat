@@ -35,6 +35,8 @@ extern float         dbg_mx, dbg_my, dbg_mz;
 extern float         dbg_gz_net, loopHz;
 extern bool          dbg_dir;
 extern bool          positionDirty;
+extern bool          motorRunning, vibrationDetected, compassFrozen, compassStable;
+extern float         compassHeading;
 extern void          recalcSat();
 extern void          calibrateGyroOffset();
 extern void          stepMotorManual(bool dir, int count);
@@ -143,6 +145,12 @@ input{background:#0f3460;color:#eee;border:1px solid #334;border-radius:6px;padd
     <div style="font-size:12px;color:#aaa;margin-bottom:10px">Sch&uuml;ssel manuell auf Satellitensignal ausrichten, dann Kalibrieren dr&uuml;cken. Dieser Servo-Winkel wird als Referenz gespeichert.</div>
     <button class="bsave" onclick="calibrateElev()">Kalibrieren &amp; speichern</button>
     <div class="msg" id="eCalMsg"></div>
+  </div>
+  <div class="box">
+    <div class="lbl" style="margin-bottom:8px">Kompass neu einlesen</div>
+    <div style="font-size:12px;color:#aaa;margin-bottom:10px">Setzt Heading einmalig auf aktuellen Kompasswert. Nur im Stillstand m&ouml;glich (Motor aus, keine Vibration).</div>
+    <button class="bwarn" onclick="compassReset()">Kompass neu einlesen</button>
+    <div class="msg" id="eCompMsg"></div>
   </div>
   <div class="box">
     <div class="lbl" style="margin-bottom:8px">Korrektur-Achse</div>
@@ -304,6 +312,8 @@ input{background:#0f3460;color:#eee;border:1px solid #334;border-radius:6px;padd
     <div class="dbg-kv"><span class="dk">Heading</span><span class="dv" id="dHdg">--</span></div>
     <div class="dbg-kv"><span class="dk">gz Offset</span><span class="dv" id="dGzOff">--</span></div>
     <div class="dbg-kv"><span class="dk">gz Heading</span><span id="dGzSt">--</span></div>
+    <div class="dbg-kv"><span class="dk">Kompass-Status</span><span id="dCompSt">--</span></div>
+    <div class="dbg-kv"><span class="dk">Kompass Heading</span><span class="dv" id="dCompHdg">--</span></div>
   </div>
 
   <!-- Motor Status -->
@@ -405,6 +415,10 @@ function updD(){
     var err=d.err;sv('dErr',fmt(err,1)+'°');sc('dErr',Math.abs(err)>10?'hi':Math.abs(err)>2?'warn':'ok');
     document.getElementById('dDir').innerHTML=d.dir?'&#x2192; (CW)':'&#x2190; (CCW)';
     var ma=d.mact;sv('dMact',ma?'ja':'nein');sc('dMact',ma?'ok':'');
+    // Kompass-Status
+    var compLabel=d.compFrz?(d.motorRun?'⏸ Motor l\xe4uft':'⏸ Vibration'):(d.compStable?'✓ aktiv (stabil)':'○ aktiv');
+    document.getElementById('dCompSt').innerHTML='<span class="dv '+(d.compFrz?'warn':'ok')+'">'+compLabel+'</span>';
+    sv('dCompHdg',fmt(d.compHdg,1)+'\xb0');
     // System
     sv('dUp',fmtUp(d.uptime));
     sv('dHz',fmt(d.hz,0)+' Hz');sc('dHz',d.hz<50?'hi':d.hz<80?'warn':'ok');
@@ -463,6 +477,7 @@ function saveElev(){
 function calibrateElev(){fetch('/elevcal').then(function(r){return r.text();}).then(function(t){document.getElementById('eCalMsg').textContent=t;});}
 function srvEnable(){fetch('/servoenable').then(function(r){return r.text();}).then(function(t){document.getElementById('eSrvEnMsg').textContent=t;});}
 function setAxis(m){fetch('/elevaxis?m='+m).then(function(r){return r.text();}).then(function(t){document.getElementById('eAxisMsg').textContent=t;upd();});}
+function compassReset(){fetch('/compassreset').then(function(r){return r.text();}).then(function(t){document.getElementById('eCompMsg').textContent=t;});}
 function loadCfg(){fetch('/getcfg').then(function(r){return r.json();}).then(function(d){document.getElementById('gLat').value=d.lat;document.getElementById('gLon').value=d.lon;document.getElementById('gSat').value=d.sat;document.getElementById('gOff').value=d.off;});}
 function saveCfg(){var q='lat='+document.getElementById('gLat').value+'&lon='+document.getElementById('gLon').value+'&sat='+document.getElementById('gSat').value+'&off='+document.getElementById('gOff').value;fetch('/savecfg?'+q).then(function(r){return r.text();}).then(function(t){document.getElementById('gMsg').textContent=t;upd();});}
 function resetSteps(){fetch('/resetsteps').then(function(r){return r.text();}).then(function(t){document.getElementById('mMsg').textContent=t;upd();});}
@@ -501,7 +516,7 @@ void handleDebug(){
   float err=targetAzimuth-dp;
   while(err>180.0f)err-=360.0f;while(err<-180.0f)err+=360.0f;
   bool ma=(millis()-lastMotorTime<200);
-  String j="{\"ax\":"+String(dbg_ax,4)+",\"ay\":"+String(dbg_ay,4)+",\"az\":"+String(dbg_az,4)+",\"gx\":"+String(dbg_gx,3)+",\"gy\":"+String(dbg_gy,3)+",\"gz\":"+String(dbg_gz,3)+",\"gzn\":"+String(dbg_gz_net,3)+",\"gzoff\":"+String(gz_offset,3)+",\"mx\":"+String(dbg_mx,1)+",\"my\":"+String(dbg_my,1)+",\"mz\":"+String(dbg_mz,1)+",\"pitch\":"+String(pitch,2)+",\"roll\":"+String(roll,2)+",\"hdg\":"+String(heading_yaw,2)+",\"steps\":"+String(currentSteps)+",\"mpos\":"+String(dp,2)+",\"err\":"+String(err,2)+",\"dir\":"+String(dbg_dir?1:0)+",\"mact\":"+String(ma?"true":"false")+",\"servo\":"+String(servoManualAngle)+",\"smin\":"+String(servoMin)+",\"smax\":"+String(servoMax)+",\"manual\":"+String(manualControl?"true":"false")+",\"azmin\":"+String(azStepMin)+",\"azmax\":"+String(azStepMax)+",\"tracking\":"+String(trackingEnabled?"true":"false")+",\"uptime\":"+String(millis())+",\"hz\":"+String(loopHz,1)+",\"qmc\":"+String(qmc_ok?"true":"false")+",\"hmc\":"+String(hmc_ok?"true":"false")+",\"ak\":"+String(ak8963_ok?"true":"false")+"}";
+  String j="{\"ax\":"+String(dbg_ax,4)+",\"ay\":"+String(dbg_ay,4)+",\"az\":"+String(dbg_az,4)+",\"gx\":"+String(dbg_gx,3)+",\"gy\":"+String(dbg_gy,3)+",\"gz\":"+String(dbg_gz,3)+",\"gzn\":"+String(dbg_gz_net,3)+",\"gzoff\":"+String(gz_offset,3)+",\"mx\":"+String(dbg_mx,1)+",\"my\":"+String(dbg_my,1)+",\"mz\":"+String(dbg_mz,1)+",\"pitch\":"+String(pitch,2)+",\"roll\":"+String(roll,2)+",\"hdg\":"+String(heading_yaw,2)+",\"steps\":"+String(currentSteps)+",\"mpos\":"+String(dp,2)+",\"err\":"+String(err,2)+",\"dir\":"+String(dbg_dir?1:0)+",\"mact\":"+String(ma?"true":"false")+",\"servo\":"+String(servoManualAngle)+",\"smin\":"+String(servoMin)+",\"smax\":"+String(servoMax)+",\"manual\":"+String(manualControl?"true":"false")+",\"azmin\":"+String(azStepMin)+",\"azmax\":"+String(azStepMax)+",\"tracking\":"+String(trackingEnabled?"true":"false")+",\"uptime\":"+String(millis())+",\"hz\":"+String(loopHz,1)+",\"qmc\":"+String(qmc_ok?"true":"false")+",\"hmc\":"+String(hmc_ok?"true":"false")+",\"ak\":"+String(ak8963_ok?"true":"false")+",\"motorRun\":"+String(motorRunning?"true":"false")+",\"vib\":"+String(vibrationDetected?"true":"false")+",\"compFrz\":"+String(compassFrozen?"true":"false")+",\"compHdg\":"+String(compassHeading,1)+",\"compStable\":"+String(compassStable?"true":"false")+"}";
   server.send(200,"application/json",j);
 }
 
@@ -700,6 +715,16 @@ void handleElevCal(){
   server.send(200,"text/plain",buf);
 }
 
+// ─── Kompass-Reset (Stufe 2) ──────────────────────────────────────────────
+void handleCompassReset() {
+  if (motorRunning || vibrationDetected) {
+    server.send(200,"text/plain","Abgelehnt \xe2\x9c\x97 \xe2\x80\x93 nicht im Stillstand");
+    return;
+  }
+  heading_yaw = compassHeading;
+  server.send(200,"text/plain","Heading auf Kompasswert gesetzt \xe2\x9c\x93");
+}
+
 // ─── GPS / Sat ────────────────────────────────────────────────────────────
 void handleGetCfg(){server.send(200,"application/json","{\"lat\":"+String(gps_lat,4)+",\"lon\":"+String(gps_lon,4)+",\"sat\":"+String(sat_lon,1)+",\"off\":"+String(az_offset,1)+"}");}
 void handleSaveCfg(){if(server.hasArg("lat"))gps_lat=server.arg("lat").toDouble();if(server.hasArg("lon"))gps_lon=server.arg("lon").toDouble();if(server.hasArg("sat"))sat_lon=server.arg("sat").toDouble();if(server.hasArg("off"))az_offset=server.arg("off").toFloat();recalcSat();prefs.begin("autosat",false);prefs.putDouble("gpsLat",gps_lat);prefs.putDouble("gpsLon",gps_lon);prefs.putDouble("satLon",sat_lon);prefs.putFloat("azOffset",az_offset);prefs.end();server.send(200,"text/plain","Gespeichert \xe2\x9c\x93");}
@@ -760,6 +785,7 @@ void setupWebPortal(const char* apSSID,const char* apPass){
   server.on("/saveelev",handleSaveElev);
   server.on("/elevcal",handleElevCal);
   server.on("/elevaxis",handleElevAxis);
+  server.on("/compassreset",handleCompassReset);
   server.on("/getcfg",handleGetCfg);
   server.on("/savecfg",handleSaveCfg);
   server.on("/resetsteps",handleResetSteps);
