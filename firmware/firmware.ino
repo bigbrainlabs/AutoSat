@@ -135,12 +135,14 @@ int          elevAxisMode    = 0;
 int          servoTarget      = 20;   // Zielwinkel für langsame Rampe
 int          servoActual      = 20;   // Tatsächlich geschriebener Winkel
 bool         servoEnabled     = false; // Servo erst nach explizitem Aktivieren im Portal bewegen
+bool         servoInitDone    = false; // true sobald Servo erstmals Ziel erreicht (danach Tracking-Speed)
 bool         manualControl    = false;
 unsigned long lastServoCmd    = 0;
 unsigned long lastServoStep   = 0;    // Zeitstempel letzter Rampen-Schritt
 
-// Motorposition persistent
+// Motorposition + Servo-Position persistent
 long         lastSavedSteps   = 0;
+int          servoLastPos     = 0;    // Letzte bekannte Servo-Position (aus NVM)
 bool         positionDirty    = false;
 
 // WLAN-Credentials (persistent)
@@ -603,22 +605,34 @@ void updateAzimuth(float heading) {
   if (currentSteps >= azStepMax && error > 0) return;
   if (currentSteps <= azStepMin && error < 0) return;
 
-  int  steps = constrain((int)(fabsf(error) * STEPS_PER_DEGREE), 1, 10);
-  bool dir   = error > 0;
-  for (int i = 0; i < steps; i++) stepMotor(dir);
+  bool dir = error > 0;
+  if (fabsf(error) > 3.0f) {
+    // Grobe Ausrichtung / Initialisierung: sanfte Rampe (Anlauf + Auslauf)
+    int steps = constrain((int)(fabsf(error) * STEPS_PER_DEGREE * 0.3f), 1, 20);
+    stepMotorManual(dir, steps);
+  } else {
+    // Feines Live-Tracking: schnelle kleine Korrekturen
+    int steps = constrain((int)(fabsf(error) * STEPS_PER_DEGREE), 1, 10);
+    for (int i = 0; i < steps; i++) stepMotor(dir);
+  }
 }
 
 // ═══════════════════════════════════════════════
 // ELEVATION NACHFÜHREN
 // ═══════════════════════════════════════════════
-#define SERVO_STEP_MS_MANUAL   60  // ~16°/s – manuelles Positionieren
-#define SERVO_STEP_MS_TRACKING 12  // ~83°/s – nahtloses Live-Tracking
+#define SERVO_STEP_MS_INIT     100 // ms/° – sanftes Einfahren bei Erst-Aktivierung (~10°/s)
+#define SERVO_STEP_MS_MANUAL    60 // ms/° – manuelles Positionieren (~16°/s)
+#define SERVO_STEP_MS_TRACKING  12 // ms/° – nahtloses Live-Tracking (~83°/s)
 static uint8_t servoStepMs = SERVO_STEP_MS_MANUAL;
 
 // Zielwinkel setzen. tracking=true → schnelle Rampe für Live-Tracking
 void servoMoveTo(int angle, bool tracking) {
   if (!servoEnabled) return;
-  servoStepMs = tracking ? SERVO_STEP_MS_TRACKING : SERVO_STEP_MS_MANUAL;
+  if (!servoInitDone) {
+    servoStepMs = SERVO_STEP_MS_INIT;    // Erst-Aktivierung: sehr sanft bis Ziel erreicht
+  } else {
+    servoStepMs = tracking ? SERVO_STEP_MS_TRACKING : SERVO_STEP_MS_MANUAL;
+  }
   servoTarget = constrain(angle, servoMin, servoMax);
 }
 
@@ -627,7 +641,16 @@ void servoRampTick() {
   if (!servoEnabled) return;
   if (millis() - lastServoStep < servoStepMs) return;
   lastServoStep = millis();
-  if (servoActual == servoTarget) return;
+  if (servoActual == servoTarget) {
+    if (!servoInitDone) {
+      servoInitDone = true;
+      prefs.begin("autosat", false);   // Zielposition in NVM sichern für nächsten Boot
+      prefs.putInt("srvPos", servoActual);
+      prefs.end();
+      servoLastPos = servoActual;
+    }
+    return;
+  }
   servoActual += (servoActual < servoTarget) ? 1 : -1;
   servoActual = constrain(servoActual, servoMin, servoMax);
   elevationServo.write(servoActual);
@@ -677,8 +700,7 @@ void setup() {
   pinMode(STEP_PIN, OUTPUT);
   pinMode(DIR_PIN,  OUTPUT);
 
-  // Servo bleibt beim Start DEAKTIVIERT – kein automatisches Fahren beim Boot.
-  // Erst nach explizitem "Servo aktivieren" im Portal wird er angehängt.
+  // Servo-Startzustand: wird am Ende von setup() automatisch aktiviert
   servoActual      = servoMin;
   servoTarget      = servoMin;
   servoManualAngle = servoMin;
@@ -719,6 +741,7 @@ void setup() {
   elevAxisMode  = prefs.getInt("elvAxis",   0);
   if (servoCalAngle != 0)
     servoCalAngle = constrain(servoCalAngle, servoMin, servoMax);
+  servoLastPos  = constrain(prefs.getInt("srvPos", servoMin), servoMin, servoMax);
   servoManualAngle = servoMin;
   servoActual      = servoMin;
   servoTarget      = servoMin;
@@ -756,8 +779,45 @@ void setup() {
   { unsigned long t = millis();
     while(millis()-t < 2000){ dnsServer.processNextRequest(); server.handleClient(); delay(10); } }
 
+  // ── Auto-Start: Gyro kalibrieren, Servo + Tracking direkt aktivieren ────
+  Serial.println("Auto-Start – Gyro kalibrieren (bitte stillhalten ~2.5s)...");
+  calibrateGyroOffset();
+
+  // IMU-Filter 1s einlaufen lassen → genaue Pitch/Roll für Servo-Ziel
   lastTime = millis();
-  updateElevation();
+  for (int i = 0; i < 50; i++) {
+    SensorData tmp = readMPU();
+    updateIMU(tmp);
+    delay(20);
+  }
+
+  // Servo aktivieren: Basis = kalibrierter Winkel (oder servoMin), Ziel = Basis + Lagekorrektur
+  {
+    int baseAngle = (servoCalAngle > 0) ? servoCalAngle : servoMin;
+    float corr = 0.0f;
+    switch (elevAxisMode) {
+      case 1: corr =  roll;  break;
+      case 2: corr = -pitch; break;
+      case 3: corr = -roll;  break;
+      default: corr = pitch; break;
+    }
+    int srvTarget = constrain(baseAngle + (int)roundf(corr), servoMin, servoMax);
+    elevationServo.attach(SERVO_PIN);
+    elevationServo.write(servoLastPos);   // Letzte bekannte Position (aus NVM)
+    servoActual      = servoLastPos;
+    servoTarget      = srvTarget;
+    servoManualAngle = servoLastPos;
+    servoStepMs      = SERVO_STEP_MS_INIT;  // Sofort Init-Speed setzen – nicht erst nach erstem Loop-Tick
+    servoEnabled     = true;
+    servoInitDone    = false;
+    Serial.printf("Servo: %d° -> %d° (Korr %.1f°, sanft)\n", servoLastPos, srvTarget, corr);
+  }
+
+  // Tracking aktivieren → Motor fährt selbstständig zum Satelliten-Azimut
+  trackingEnabled = true;
+  Serial.println("Tracking AN – Schuessel faehrt zu Satelliten-Azimut.");
+
+  lastTime = millis();
   Serial.println("Bereit.");
 }
 
@@ -778,8 +838,10 @@ void loop() {
   if (positionDirty && (millis() - lastMotorTime > 5000)) {
     prefs.begin("autosat", false);
     prefs.putLong("steps", currentSteps);
+    prefs.putInt ("srvPos", servoActual);
     prefs.end();
     lastSavedSteps = currentSteps;
+    servoLastPos   = servoActual;
     positionDirty  = false;
   }
 

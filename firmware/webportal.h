@@ -18,7 +18,7 @@ extern Servo         elevationServo;
 extern int           servoMin, servoMax, servoManualAngle;
 extern int           servoCalAngle, servoTarget, servoActual;
 extern int           elevAxisMode;
-extern bool          servoEnabled;
+extern bool          servoEnabled, servoInitDone;
 extern bool          manualControl;
 extern unsigned long lastServoCmd, lastMotorTime;
 extern long          currentSteps, azStepMin, azStepMax;
@@ -667,19 +667,28 @@ void handleResetHeading(){
 void handleServoEnable(){
   if (!servoEnabled) {
     elevationServo.attach(SERVO_PIN);
-    int target = (servoCalAngle > 0) ? servoCalAngle : servoMin;
-    // Absoluter Zielwinkel direkt schreiben – MG996R kennt seine Position via internes Poti
-    // und fährt zuverlässig dorthin. Rampe gilt für alle folgenden Bewegungen.
-    elevationServo.write(target);
-    servoActual      = target;
+    int baseAngle = (servoCalAngle > 0) ? servoCalAngle : servoMin;
+    // Zielwinkel aus Kalibrierung + aktueller IMU-Lage berechnen (identisch zu updateElevation)
+    float corr = 0.0f;
+    switch (elevAxisMode) {
+      case 1:  corr =  roll;  break;
+      case 2:  corr = -pitch; break;
+      case 3:  corr = -roll;  break;
+      default: corr =  pitch; break;
+    }
+    int target = constrain(baseAngle + (int)roundf(corr), servoMin, servoMax);
+    // Ausgangspunkt = kalibrierter Winkel (letzte bekannte mechanische Position)
+    elevationServo.write(baseAngle);
+    servoActual      = baseAngle;
     servoTarget      = target;
-    servoManualAngle = target;
+    servoManualAngle = baseAngle;
     servoEnabled     = true;
-    Serial.printf("Servo aktiviert – Ziel: %d° (cal=%d)\n", target, servoCalAngle);
+    servoInitDone    = false;   // Sanfte Rampe (100ms/°) bis Ziel erreicht
+    Serial.printf("Servo aktiv – Basis:%d° Korr:%.1f° Ziel:%d°\n", baseAngle, corr, target);
     if (servoCalAngle > 0)
-      server.send(200,"text/plain","Servo aktiv \xe2\x9c\x93 – Position: "+String(target)+"\xc2\xb0");
+      server.send(200,"text/plain","Servo aktiv \xe2\x9c\x93 \xe2\x80\x93 f\xc3\xa4hrt auf "+String(target)+"\xc2\xb0 (Kalibrierung + Lage)");
     else
-      server.send(200,"text/plain","Servo aktiv \xe2\x9c\x93 – noch nicht kalibriert, manuell ausrichten");
+      server.send(200,"text/plain","Servo aktiv \xe2\x9c\x93 \xe2\x80\x93 nicht kalibriert, manuell ausrichten");
   } else {
     server.send(200,"text/plain","Servo bereits aktiv");
   }
